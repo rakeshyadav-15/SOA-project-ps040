@@ -1,0 +1,828 @@
+================================================================================
+  PS040 – LogiFleet Commercial Fleet Telematics & Maintenance Operations
+  COMPLETE TESTING GUIDE
+================================================================================
+
+OVERVIEW
+--------
+This guide covers:
+  1. Database setup
+  2. Starting all services in the correct order
+  3. Complete API test flow using Postman or any REST client
+  4. Expected results for each request
+  5. Error/edge case tests
+
+BASE URL (API Gateway):  http://localhost:8080
+All requests go through the Gateway — NOT directly to individual services.
+
+================================================================================
+PART 1 — DATABASE SETUP (MySQL)
+================================================================================
+
+Open MySQL Workbench or any MySQL client and run:
+
+  CREATE DATABASE IF NOT EXISTS auth_db;
+  CREATE DATABASE IF NOT EXISTS vehicle_db;
+  CREATE DATABASE IF NOT EXISTS trip_db;
+  CREATE DATABASE IF NOT EXISTS maintenance_db;
+
+NOTE: spring.jpa.hibernate.ddl-auto=update means the tables are created
+automatically when each service starts. You do NOT need to create tables
+manually.
+
+MySQL credentials used across all services:
+  username: root
+  password: qwert1234
+  (Change these in each service's application.properties if yours differ)
+
+================================================================================
+PART 2 — SERVICE STARTUP ORDER
+================================================================================
+
+IMPORTANT: Always start services in this exact order.
+Each service must be FULLY started (port listening) before starting the next.
+
+-------------------------------------------------------
+STEP 1: Start Eureka Server
+-------------------------------------------------------
+  Folder : d:\sdp\ss\eureka-server
+  Port   : 8761
+  How    : Open in IDE → Run EurekaServerApplication.java
+           OR run: .\mvnw.cmd spring-boot:run
+
+  Wait for this log line:
+    "Started EurekaServerApplication in X seconds"
+
+  Verify : Open browser → http://localhost:8761
+           You should see the Eureka dashboard (no instances yet)
+
+-------------------------------------------------------
+STEP 2: Start Auth Service
+-------------------------------------------------------
+  Folder : d:\sdp\ss\auth-service
+  Port   : 8084
+  How    : Run AuthServiceApplication.java
+
+  Wait for:
+    "Started AuthServiceApplication in X seconds"
+
+  Verify : Eureka dashboard → AUTH-SERVICE should appear under "Instances"
+
+-------------------------------------------------------
+STEP 3: Start Vehicle Service
+-------------------------------------------------------
+  Folder : d:\sdp\ss\vehicle-service
+  Port   : 8081
+  How    : Run VehicleServiceApplication.java
+
+  Wait for:
+    "Started VehicleServiceApplication in X seconds"
+
+  Verify : Eureka dashboard → VEHICLE-SERVICE appears
+
+-------------------------------------------------------
+STEP 4: Start Maintenance Service
+-------------------------------------------------------
+  Folder : d:\sdp\ss\maintenance-service
+  Port   : 8083
+  How    : Run MaintenanceServiceApplication.java
+
+  Wait for:
+    "Started MaintenanceServiceApplication in X seconds"
+
+  Verify : Eureka dashboard → MAINTENANCE-SERVICE appears
+
+-------------------------------------------------------
+STEP 5: Start Trip Service
+-------------------------------------------------------
+  Folder : d:\sdp\ss\trip-service
+  Port   : 8082
+  How    : Run TripServiceApplication.java
+
+  Wait for:
+    "Started TripServiceApplication in X seconds"
+
+  Verify : Eureka dashboard → TRIP-SERVICE appears
+
+-------------------------------------------------------
+STEP 6: Start API Gateway (LAST)
+-------------------------------------------------------
+  Folder : d:\sdp\ss\api-gateway
+  Port   : 8080
+  How    : Run ApiGatewayApplication.java
+
+  Wait for:
+    "Started ApiGatewayApplication in X seconds"
+
+  Final Check:
+    Open http://localhost:8761
+    You should see ALL 5 services registered:
+      AUTH-SERVICE
+      VEHICLE-SERVICE
+      MAINTENANCE-SERVICE
+      TRIP-SERVICE
+      API-GATEWAY
+
+================================================================================
+PART 3 — API TEST FLOW
+================================================================================
+
+Use Postman, Insomnia, or curl.
+All requests go to: http://localhost:8080
+
+For all protected endpoints, add this header after login:
+  Key   : Authorization
+  Value : Bearer <your_token_here>
+
+Replace <your_token_here> with the actual JWT received from the login response.
+
+================================================================================
+SECTION A — USER REGISTRATION & LOGIN
+================================================================================
+
+--- A1: Register ADMIN user ---
+
+  Method : POST
+  URL    : http://localhost:8080/api/auth/register
+  Headers: Content-Type: application/json
+  Body   :
+    {
+      "username": "admin",
+      "password": "admin123",
+      "role": "ADMIN"
+    }
+
+  Expected Response (200):
+    {
+      "id": 1,
+      "username": "admin",
+      "role": "ADMIN"
+    }
+
+  NOTE: Password hash is NOT returned. This is intentional.
+
+--- A2: Register DISPATCHER user ---
+
+  Method : POST
+  URL    : http://localhost:8080/api/auth/register
+  Body   :
+    {
+      "username": "dispatcher1",
+      "password": "disp123",
+      "role": "DISPATCHER"
+    }
+
+  Expected Response (200):
+    {
+      "id": 2,
+      "username": "dispatcher1",
+      "role": "DISPATCHER"
+    }
+
+--- A3: Register MAINTENANCE user ---
+
+  Method : POST
+  URL    : http://localhost:8080/api/auth/register
+  Body   :
+    {
+      "username": "mechanic1",
+      "password": "mech123",
+      "role": "MAINTENANCE"
+    }
+
+  Expected Response (200):
+    {
+      "id": 3,
+      "username": "mechanic1",
+      "role": "MAINTENANCE"
+    }
+
+--- A4: Login as ADMIN (get JWT token) ---
+
+  Method : POST
+  URL    : http://localhost:8080/api/auth/login
+  Headers: Content-Type: application/json
+  Body   :
+    {
+      "username": "admin",
+      "password": "admin123"
+    }
+
+  Expected Response (200):
+    {
+      "token": "eyJhbGciOiJIUzI1NiJ9.ey..."
+    }
+
+  >>> COPY THIS TOKEN. You will use it in all ADMIN requests below. <<<
+  >>> The token expires in 1 hour. Re-login if it expires.          <<<
+
+--- A5: Login as DISPATCHER ---
+
+  Method : POST
+  URL    : http://localhost:8080/api/auth/login
+  Body   :
+    {
+      "username": "dispatcher1",
+      "password": "disp123"
+    }
+
+  >>> COPY THIS TOKEN as DISPATCHER_TOKEN <<<
+
+--- A6: Login as MAINTENANCE ---
+
+  Method : POST
+  URL    : http://localhost:8080/api/auth/login
+  Body   :
+    {
+      "username": "mechanic1",
+      "password": "mech123"
+    }
+
+  >>> COPY THIS TOKEN as MAINTENANCE_TOKEN <<<
+
+================================================================================
+SECTION B — VEHICLE MANAGEMENT (ADMIN role required for create/update/delete)
+================================================================================
+
+--- B1: Create a vehicle ---
+
+  Method  : POST
+  URL     : http://localhost:8080/api/vehicles
+  Headers :
+    Content-Type: application/json
+    Authorization: Bearer <ADMIN_TOKEN>
+  Body    :
+    {
+      "registrationNumber": "AP39AB1234",
+      "model": "Tata Prima",
+      "status": "AVAILABLE",
+      "location": "Vijayawada"
+    }
+
+  Expected Response (200):
+    {
+      "id": 1,
+      "registrationNumber": "AP39AB1234",
+      "model": "Tata Prima",
+      "status": "AVAILABLE",
+      "location": "Vijayawada"
+    }
+
+  >>> NOTE vehicle id (should be 1) <<<
+
+--- B2: Create a second vehicle ---
+
+  Method  : POST
+  URL     : http://localhost:8080/api/vehicles
+  Headers : Authorization: Bearer <ADMIN_TOKEN>
+  Body    :
+    {
+      "registrationNumber": "TS09CD5678",
+      "model": "Ashok Leyland Dost",
+      "status": "AVAILABLE",
+      "location": "Hyderabad"
+    }
+
+  Expected: id will be 2
+
+--- B3: Get all vehicles ---
+
+  Method  : GET
+  URL     : http://localhost:8080/api/vehicles
+  Headers : Authorization: Bearer <ADMIN_TOKEN>
+
+  Expected: Array of 2 vehicle objects.
+
+--- B4: Get vehicle by ID ---
+
+  Method  : GET
+  URL     : http://localhost:8080/api/vehicles/1
+  Headers : Authorization: Bearer <ADMIN_TOKEN>
+
+  Expected: Vehicle with id=1
+
+--- B5: Update vehicle status manually ---
+
+  Method  : PUT
+  URL     : http://localhost:8080/api/vehicles/1/status?status=AVAILABLE
+  Headers : Authorization: Bearer <ADMIN_TOKEN>
+
+  Expected (200): Vehicle object with status = "AVAILABLE"
+
+================================================================================
+SECTION C — MAINTENANCE WORKFLOW
+================================================================================
+
+Use MAINTENANCE_TOKEN or ADMIN_TOKEN for these requests.
+
+--- C1: Create a maintenance record (vehicle auto-becomes UNDER_MAINTENANCE) ---
+
+  Method  : POST
+  URL     : http://localhost:8080/api/maintenance
+  Headers :
+    Content-Type: application/json
+    Authorization: Bearer <MAINTENANCE_TOKEN>
+  Body    :
+    {
+      "vehicleId": 1,
+      "maintenanceType": "PREVENTIVE",
+      "description": "Regular engine check and oil change",
+      "scheduledDate": "2026-09-25",
+      "completedDate": null,
+      "status": "SCHEDULED",
+      "cost": 5000.0
+    }
+
+  Expected Response (200):
+    {
+      "id": 1,
+      "vehicleId": 1,
+      "maintenanceType": "PREVENTIVE",
+      ...
+      "status": "SCHEDULED",
+      "cost": 5000.0
+    }
+
+  SIDE EFFECT: Vehicle 1 status is now automatically set to UNDER_MAINTENANCE.
+  Verify by calling GET http://localhost:8080/api/vehicles/1 → status = "UNDER_MAINTENANCE"
+
+--- C2: Try to create a trip on a vehicle that is UNDER_MAINTENANCE ---
+
+  Method  : POST
+  URL     : http://localhost:8080/api/trips
+  Headers : Authorization: Bearer <DISPATCHER_TOKEN>
+  Body    :
+    {
+      "vehicleId": 1,
+      "driverId": 101,
+      "source": "Vijayawada",
+      "destination": "Hyderabad"
+    }
+
+  Expected Response (400):
+    "Cannot assign trip: vehicle is UNDER_MAINTENANCE"
+
+--- C3: Complete the maintenance (vehicle auto-becomes AVAILABLE) ---
+
+  Method  : PUT
+  URL     : http://localhost:8080/api/maintenance/1/complete
+  Headers : Authorization: Bearer <MAINTENANCE_TOKEN>
+
+  Expected Response (200):
+    {
+      "id": 1,
+      ...
+      "status": "COMPLETED",
+      "completedDate": "2026-09-21"   ← today's date auto-set
+    }
+
+  SIDE EFFECT: Vehicle 1 status is now automatically set back to AVAILABLE.
+  Verify by calling GET http://localhost:8080/api/vehicles/1 → status = "AVAILABLE"
+
+--- C4: Create a second maintenance record on vehicle 2 ---
+
+  Method  : POST
+  URL     : http://localhost:8080/api/maintenance
+  Headers : Authorization: Bearer <MAINTENANCE_TOKEN>
+  Body    :
+    {
+      "vehicleId": 2,
+      "maintenanceType": "CORRECTIVE",
+      "description": "Brake pad replacement",
+      "scheduledDate": "2026-09-26",
+      "completedDate": null,
+      "status": "SCHEDULED",
+      "cost": 3500.0
+    }
+
+  Vehicle 2 will now be UNDER_MAINTENANCE.
+
+--- C5: Complete vehicle 2 maintenance ---
+
+  Method  : PUT
+  URL     : http://localhost:8080/api/maintenance/2/complete
+  Headers : Authorization: Bearer <MAINTENANCE_TOKEN>
+
+  Vehicle 2 returns to AVAILABLE.
+
+--- C6: Get maintenance history for vehicle 1 ---
+
+  Method  : GET
+  URL     : http://localhost:8080/api/maintenance/vehicle/1
+  Headers : Authorization: Bearer <MAINTENANCE_TOKEN>
+
+  Expected: Array of all maintenance records for vehicle 1.
+  (Should show 1 record with status=COMPLETED)
+
+================================================================================
+SECTION D — TRIP WORKFLOW
+================================================================================
+
+Use DISPATCHER_TOKEN or ADMIN_TOKEN.
+Both vehicles should now be AVAILABLE after completing their maintenance.
+
+--- D1: Create a trip (vehicle becomes ASSIGNED) ---
+
+  Method  : POST
+  URL     : http://localhost:8080/api/trips
+  Headers :
+    Content-Type: application/json
+    Authorization: Bearer <DISPATCHER_TOKEN>
+  Body    :
+    {
+      "vehicleId": 1,
+      "driverId": 101,
+      "source": "Vijayawada",
+      "destination": "Hyderabad"
+    }
+
+  Expected Response (200):
+    {
+      "id": 1,
+      "vehicleId": 1,
+      "driverId": 101,
+      "source": "Vijayawada",
+      "destination": "Hyderabad",
+      "status": "ASSIGNED"      ← automatically set
+    }
+
+  NOTE: Vehicle 1 remains AVAILABLE until the driver actually starts.
+
+--- D2: Start the trip (vehicle becomes ON_TRIP) ---
+
+  Method  : PUT
+  URL     : http://localhost:8080/api/trips/1/start
+  Headers : Authorization: Bearer <DISPATCHER_TOKEN>
+
+  Expected Response (200):
+    {
+      "id": 1,
+      "status": "IN_PROGRESS"
+    }
+
+  SIDE EFFECT: Vehicle 1 status is now ON_TRIP.
+  Verify: GET http://localhost:8080/api/vehicles/1 → status = "ON_TRIP"
+
+--- D3: Try to assign another trip to the same vehicle (should fail) ---
+
+  Method  : POST
+  URL     : http://localhost:8080/api/trips
+  Headers : Authorization: Bearer <DISPATCHER_TOKEN>
+  Body    :
+    {
+      "vehicleId": 1,
+      "driverId": 102,
+      "source": "Hyderabad",
+      "destination": "Chennai"
+    }
+
+  Expected Response (400):
+    "Cannot assign trip: vehicle is already ON_TRIP"
+
+--- D4: Try to schedule maintenance on an ON_TRIP vehicle (should fail) ---
+
+  Method  : POST
+  URL     : http://localhost:8080/api/maintenance
+  Headers : Authorization: Bearer <MAINTENANCE_TOKEN>
+  Body    :
+    {
+      "vehicleId": 1,
+      "maintenanceType": "PREVENTIVE",
+      "description": "Test",
+      "scheduledDate": "2026-09-27",
+      "status": "SCHEDULED",
+      "cost": 1000.0
+    }
+
+  Expected Response (400):
+    "Cannot schedule maintenance: vehicle is currently ON_TRIP"
+
+--- D5: Complete the trip (vehicle returns to AVAILABLE) ---
+
+  Method  : PUT
+  URL     : http://localhost:8080/api/trips/1/complete
+  Headers : Authorization: Bearer <DISPATCHER_TOKEN>
+
+  Expected Response (200):
+    {
+      "id": 1,
+      "status": "COMPLETED"
+    }
+
+  SIDE EFFECT: Vehicle 1 status is back to AVAILABLE.
+  Verify: GET http://localhost:8080/api/vehicles/1 → status = "AVAILABLE"
+
+--- D6: Create and cancel a trip ---
+
+  Step 1 — Create:
+    POST http://localhost:8080/api/trips
+    Body: { "vehicleId": 2, "driverId": 103, "source": "Chennai", "destination": "Bangalore" }
+    → Response: trip id=2, status=ASSIGNED
+
+  Step 2 — Start:
+    PUT http://localhost:8080/api/trips/2/start
+    → status=IN_PROGRESS, vehicle 2 becomes ON_TRIP
+
+  Step 3 — Cancel:
+    PUT http://localhost:8080/api/trips/2/cancel
+    → status=CANCELLED, vehicle 2 returns to AVAILABLE
+
+  Step 4 — Verify:
+    GET http://localhost:8080/api/vehicles/2 → status = "AVAILABLE"
+
+================================================================================
+SECTION E — AUTHORIZATION TESTS (SECURITY CHECKS)
+================================================================================
+
+--- E1: Access protected endpoint with NO token (should get 401) ---
+
+  Method  : GET
+  URL     : http://localhost:8080/api/vehicles
+  Headers : (none)
+
+  Expected: 401 Unauthorized
+
+--- E2: Access protected endpoint with INVALID token (should get 401) ---
+
+  Method  : GET
+  URL     : http://localhost:8080/api/vehicles
+  Headers : Authorization: Bearer thisisnotavalidtoken
+
+  Expected: 401 Unauthorized
+
+--- E3: DISPATCHER tries to create a vehicle (insufficient role → 403) ---
+
+  Method  : POST
+  URL     : http://localhost:8080/api/vehicles
+  Headers : Authorization: Bearer <DISPATCHER_TOKEN>
+  Body    : { "registrationNumber": "XX01YY9999", "model": "Test", "status": "AVAILABLE", "location": "Test" }
+
+  Expected: 403 Forbidden
+  (DISPATCHER can only VIEW vehicles, not create them — only ADMIN can)
+
+--- E4: MAINTENANCE user tries to create a trip (insufficient role → 403) ---
+
+  Method  : POST
+  URL     : http://localhost:8080/api/trips
+  Headers : Authorization: Bearer <MAINTENANCE_TOKEN>
+  Body    : { "vehicleId": 1, "driverId": 101, "source": "A", "destination": "B" }
+
+  Expected: 403 Forbidden
+  (MAINTENANCE cannot manage trips — only ADMIN and DISPATCHER can)
+
+--- E5: DISPATCHER can view maintenance records ---
+
+  Method  : GET
+  URL     : http://localhost:8080/api/maintenance
+  Headers : Authorization: Bearer <DISPATCHER_TOKEN>
+
+  Expected: 200 with list of all maintenance records
+
+--- E6: DISPATCHER cannot create maintenance records (403) ---
+
+  Method  : POST
+  URL     : http://localhost:8080/api/maintenance
+  Headers : Authorization: Bearer <DISPATCHER_TOKEN>
+  Body    : { "vehicleId": 1, "maintenanceType": "TEST", "scheduledDate": "2026-10-01", "status": "SCHEDULED", "cost": 100 }
+
+  Expected: 403 Forbidden
+
+--- E7: ADMIN can access everything ---
+
+  Try any endpoint with ADMIN_TOKEN — all should return 200.
+
+--- E8: ADMIN can look up users ---
+
+  Method  : GET
+  URL     : http://localhost:8080/api/auth/user/dispatcher1
+  Headers : Authorization: Bearer <ADMIN_TOKEN>
+
+  Expected (200):
+    {
+      "id": 2,
+      "username": "dispatcher1",
+      "role": "DISPATCHER"
+    }
+
+  NOTE: No password hash in the response.
+
+--- E9: Non-ADMIN cannot look up users (403) ---
+
+  Method  : GET
+  URL     : http://localhost:8080/api/auth/user/admin
+  Headers : Authorization: Bearer <DISPATCHER_TOKEN>
+
+  Expected: 403 Forbidden
+
+================================================================================
+SECTION F — VALIDATION TESTS
+================================================================================
+
+--- F1: Create vehicle with missing required field ---
+
+  Method  : POST
+  URL     : http://localhost:8080/api/vehicles
+  Headers : Authorization: Bearer <ADMIN_TOKEN>
+  Body    :
+    {
+      "model": "Tata Prima"
+    }
+
+  Expected: 400 Bad Request
+  (registrationNumber, status, location are missing)
+
+--- F2: Create maintenance with negative cost ---
+
+  Method  : POST
+  URL     : http://localhost:8080/api/maintenance
+  Headers : Authorization: Bearer <MAINTENANCE_TOKEN>
+  Body    :
+    {
+      "vehicleId": 1,
+      "maintenanceType": "PREVENTIVE",
+      "scheduledDate": "2026-10-01",
+      "status": "SCHEDULED",
+      "cost": -500.0
+    }
+
+  Expected: 400 Bad Request
+  (cost must be zero or positive)
+
+--- F3: Create trip with missing vehicleId ---
+
+  Method  : POST
+  URL     : http://localhost:8080/api/trips
+  Headers : Authorization: Bearer <DISPATCHER_TOKEN>
+  Body    :
+    {
+      "driverId": 101,
+      "source": "Vijayawada",
+      "destination": "Hyderabad"
+    }
+
+  Expected: 400 Bad Request
+
+================================================================================
+SECTION G — FULL STATE MACHINE VERIFICATION
+================================================================================
+
+This test verifies the complete vehicle state lifecycle end-to-end.
+
+Vehicle states: AVAILABLE → UNDER_MAINTENANCE → AVAILABLE → ON_TRIP → AVAILABLE
+
+Step 1 : GET /api/vehicles/1 → status = AVAILABLE
+Step 2 : POST /api/maintenance  (vehicleId=1) → vehicle becomes UNDER_MAINTENANCE
+Step 3 : GET /api/vehicles/1 → status = UNDER_MAINTENANCE
+Step 4 : PUT /api/maintenance/1/complete → vehicle becomes AVAILABLE
+Step 5 : GET /api/vehicles/1 → status = AVAILABLE
+Step 6 : POST /api/trips (vehicleId=1) → trip created, status=ASSIGNED
+Step 7 : GET /api/vehicles/1 → status = AVAILABLE (still, ASSIGNED doesn't lock vehicle)
+Step 8 : PUT /api/trips/1/start → vehicle becomes ON_TRIP
+Step 9 : GET /api/vehicles/1 → status = ON_TRIP
+Step 10: PUT /api/trips/1/complete → vehicle becomes AVAILABLE
+Step 11: GET /api/vehicles/1 → status = AVAILABLE
+
+================================================================================
+SECTION H — MAINTENANCE HISTORY
+================================================================================
+
+--- H1: Get full maintenance history for vehicle 1 ---
+
+  Method  : GET
+  URL     : http://localhost:8080/api/maintenance/vehicle/1
+  Headers : Authorization: Bearer <ADMIN_TOKEN>
+
+  Expected: Array containing all maintenance records where vehicleId = 1.
+  Should show the COMPLETED record from Section C.
+
+--- H2: Get all maintenance records ---
+
+  Method  : GET
+  URL     : http://localhost:8080/api/maintenance
+  Headers : Authorization: Bearer <ADMIN_TOKEN>
+
+  Expected: All maintenance records across all vehicles.
+
+================================================================================
+SECTION I — ADDITIONAL GET / CRUD TESTS
+================================================================================
+
+--- I1: Get all trips ---
+
+  Method  : GET
+  URL     : http://localhost:8080/api/trips
+  Headers : Authorization: Bearer <DISPATCHER_TOKEN>
+
+--- I2: Get trip by ID ---
+
+  Method  : GET
+  URL     : http://localhost:8080/api/trips/1
+  Headers : Authorization: Bearer <DISPATCHER_TOKEN>
+
+--- I3: Get maintenance by ID ---
+
+  Method  : GET
+  URL     : http://localhost:8080/api/maintenance/1
+  Headers : Authorization: Bearer <MAINTENANCE_TOKEN>
+
+--- I4: Delete a vehicle (ADMIN only) ---
+
+  Method  : DELETE
+  URL     : http://localhost:8080/api/vehicles/2
+  Headers : Authorization: Bearer <ADMIN_TOKEN>
+
+  Expected: 204 No Content
+
+================================================================================
+PART 4 — ROLE PERMISSIONS SUMMARY TABLE
+================================================================================
+
+  ENDPOINT                        | ADMIN | DISPATCHER | MAINTENANCE
+  --------------------------------|-------|------------|------------
+  POST   /api/auth/register       | open  | open       | open
+  POST   /api/auth/login          | open  | open       | open
+  GET    /api/auth/user/{name}    |  YES  |  NO        |  NO
+  --------------------------------|-------|------------|------------
+  GET    /api/vehicles/**         |  YES  |  YES       |  YES
+  POST   /api/vehicles            |  YES  |  NO        |  NO
+  PUT    /api/vehicles/**         |  YES  |  NO        |  NO
+  DELETE /api/vehicles/**         |  YES  |  NO        |  NO
+  --------------------------------|-------|------------|------------
+  GET    /api/trips/**            |  YES  |  YES       |  NO
+  POST   /api/trips               |  YES  |  YES       |  NO
+  PUT    /api/trips/**            |  YES  |  YES       |  NO
+  DELETE /api/trips/**            |  YES  |  YES       |  NO
+  --------------------------------|-------|------------|------------
+  GET    /api/maintenance/**      |  YES  |  YES       |  YES
+  POST   /api/maintenance         |  YES  |  NO        |  YES
+  PUT    /api/maintenance/**      |  YES  |  NO        |  YES
+  DELETE /api/maintenance/**      |  YES  |  NO        |  YES
+
+================================================================================
+PART 5 — NEW ENDPOINTS ADDED (Quick Reference)
+================================================================================
+
+VEHICLE SERVICE (port 8081 / gateway :8080)
+  PUT  /api/vehicles/{id}/status?status=AVAILABLE        → update status only
+
+MAINTENANCE SERVICE (port 8083 / gateway :8080)
+  PUT  /api/maintenance/{id}/complete                    → complete + vehicle→AVAILABLE
+  GET  /api/maintenance/vehicle/{vehicleId}              → maintenance history
+
+TRIP SERVICE (port 8082 / gateway :8080)
+  PUT  /api/trips/{id}/start                             → trip→IN_PROGRESS, vehicle→ON_TRIP
+  PUT  /api/trips/{id}/complete                          → trip→COMPLETED, vehicle→AVAILABLE
+  PUT  /api/trips/{id}/cancel                            → trip→CANCELLED, vehicle→AVAILABLE
+
+================================================================================
+PART 6 — COMMON ERRORS & FIXES
+================================================================================
+
+PROBLEM : 401 on all requests including /api/auth/login
+FIX     : Check that api-gateway is started LAST. If Gateway starts before
+          auth-service registers with Eureka, routes may not resolve.
+          Restart Gateway after all services are UP in Eureka.
+
+PROBLEM : 503 Service Unavailable from Gateway
+FIX     : The target service (vehicle-service, trip-service, etc.) is not
+          registered with Eureka. Check Eureka dashboard → all services must
+          show UP status. Wait ~30 seconds after service start before testing.
+
+PROBLEM : Feign call fails with connection refused
+FIX     : Vehicle Service must be running when you call maintenance or trip
+          endpoints. The Feign client calls vehicle-service via Eureka.
+
+PROBLEM : JWT token expired (401 after 1 hour)
+FIX     : Call POST /api/auth/login again to get a fresh token.
+
+PROBLEM : 403 Forbidden even with correct role
+FIX     : Make sure you registered the user with the correct role value:
+          "ADMIN", "DISPATCHER", or "MAINTENANCE" (case-sensitive).
+
+PROBLEM : Maintenance POST returns 400 "Vehicle is already under maintenance"
+FIX     : The vehicle's status is already UNDER_MAINTENANCE. Either complete
+          the existing maintenance first, or choose a different vehicle.
+
+PROBLEM : Trip POST returns 400 "vehicle is already ON_TRIP"
+FIX     : The vehicle is currently on another trip. Complete or cancel that
+          trip first.
+
+================================================================================
+PART 7 — SERVICES PORTS QUICK REFERENCE
+================================================================================
+
+  Service              | Port | Database
+  ---------------------|------|---------------
+  Eureka Server        | 8761 | (none)
+  API Gateway          | 8080 | (none)
+  Auth Service         | 8084 | auth_db
+  Vehicle Service      | 8081 | vehicle_db
+  Trip Service         | 8082 | trip_db
+  Maintenance Service  | 8083 | maintenance_db
+
+Eureka Dashboard : http://localhost:8761
+API Gateway Base : http://localhost:8080
+
+================================================================================
+END OF GUIDE
+================================================================================
